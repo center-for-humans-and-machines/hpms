@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+#
+# Install dependencies.
+
+set -o errexit
+set -o pipefail
+set -o nounset
+
+# shellcheck disable=SC1091
+source utils.sh
+
+check_command pre-commit
+check_command pylint
+
+fancy_echo "Install pre-commit hooks"
+pre-commit install --overwrite
+
+fancy_echo "Install Python dependencies"
+poetry install --all-extras
+
+poetry run python -m nltk.downloader all
+
+# If the file .env does not exist, create it
+if [ -f .env ]; then
+  fancy_echo ".env file already exists"
+else
+  fancy_echo "Creating a .env file"
+  cp env.example .env
+
+  fancy_echo "Enter your credentials in the .env file"
+fi
+
+fancy_echo "Done"

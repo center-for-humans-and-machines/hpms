@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+#
+# Test code.
+
+set -o errexit
+set -o pipefail
+set -o nounset
+
+# shellcheck disable=SC1091
+source utils.sh
+
+usage() {
+  # Get script directory relative to pwd
+  SCRIPT_DIR=$(dirname "$0")
+  SCRIPT_NAME=$(basename "$0")
+  RELATIVE_PATH="${SCRIPT_DIR}/${SCRIPT_NAME}"
+
+  cat <<EOM
+
+  HPMS
+
+Run test suite for HPMS
+
+Usage: ${RELATIVE_PATH} [options]
+
+Options:
+  -r               Run regression tests
+  -h               Display this help message
+
+Examples:
+  # Run tests without regression suite
+  ${RELATIVE_PATH}
+
+  # Run all tests including regression suite
+  ${RELATIVE_PATH} -r
+
+  # Display this help dialog
+  ${RELATIVE_PATH} -h
+EOM
+}
+
+check_required_env_vars() {
+  # Define environment variables to set
+  declare -a env_vars=(
+    "MODEL_API_KEY"
+    "MODEL_ENDPOINT"
+    "BATCH_MODEL_NAME"
+  )
+
+  # Check if the required variables are set
+  for my_env_var in "${env_vars[@]}"; do
+    if [[ -z "${!my_env_var:-}" ]]; then
+      err_exit "Environment variable ${my_env_var} is not set"
+    fi
+    # Export using printenv to ensure correct value propagation
+    val=$(printenv "$my_env_var")
+    export "$my_env_var"="$val"
+  done
+}
+
+# Parse command line options
+RUN_REGRESSION=false
+while getopts 'rh' opt; do
+  case $opt in
+  r) RUN_REGRESSION=true ;;
+  h | *) usage && exit 0 ;;
+  esac
+done
+
+fancy_echo "Test codebase"
+if [[ "$RUN_REGRESSION" == "true" ]]; then
+  fancy_echo "Running all tests including regression suite"
+  poetry run pytest
+else
+  check_required_env_vars
+
+  fancy_echo "Running tests (excluding regression suite)"
+  poetry run pytest --junit-xml=.test_report.xml --ignore=tests/test_regression.py
+fi

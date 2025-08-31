@@ -1,0 +1,178 @@
+name: Regression testing
+
+on: # yamllint disable-line rule:truthy
+  workflow_dispatch: # Enables manual trigger
+
+env:
+  BATCH_PROVIDER: openai
+  BATCH_MODEL_NAME: ${{ vars.BATCH_MODEL_NAME }}
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  OPENAI_ENDPOINT: ${{ vars.OPENAI_ENDPOINT }}
+  GEMINI_ENDPOINT: ${{ vars.GEMINI_ENDPOINT }}
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+  LANGFUSE_HOST: ${{ vars.LANGFUSE_HOST }}
+  LANGFUSE_PUBLIC_KEY: ${{ vars.LANGFUSE_PUBLIC_KEY }}
+  LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+  TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+  TOGETHER_ENDPOINT: ${{ vars.TOGETHER_ENDPOINT }}
+  LLAMA_GUARD_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+  LLAMA_GUARD_ENDPOINT: ${{ vars.TOGETHER_ENDPOINT }}
+  OPENAI_MODERATION_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  SKIP_CACHE: true
+
+jobs:
+  gen-data:
+    runs-on: self-hosted
+    strategy:
+      fail-fast: false
+      matrix:
+        round_number: [2, 3]
+        chat_model:
+          - gpt-4o-mini-2024-07-18
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install poetry
+        run: |
+          python -m pip install poetry==2.1.2
+
+      - name: Configure poetry
+        run: |
+          python -m poetry config virtualenvs.in-project true
+
+      - name: Set up cache
+        uses: actions/cache@v4
+        id: cached-poetry-dependencies
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-3.13-${{ hashFiles('**/poetry.lock') }}-self-hosted
+
+      - name: Install dependencies
+        run: poetry install
+        if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
+
+      - name: Generate dataset
+        env:
+          MODEL_API_KEY: ${{ startsWith(matrix.chat_model, 'gpt-') && secrets.OPENAI_API_KEY || secrets.GEMINI_API_KEY }}
+          MODEL_ENDPOINT: ${{ startsWith(matrix.chat_model, 'gpt-') && vars.OPENAI_ENDPOINT || vars.GEMINI_ENDPOINT }}
+          CHAT_COMPLETIONS_MODEL_NAME: ${{ matrix.chat_model }}
+        run: |
+          poetry run python generate_dataset.py --round-number=${{ matrix.round_number }} --tag=regression-pipeline
+
+      - name: Archive data generation results to GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: reg-test-gen-round-${{ matrix.round_number }}-${{ matrix.chat_model }}-${{ github.run_id }}
+          path: |
+            data/dataset/*.json
+
+      - name: Setup Google Drive credentials
+        uses: ./.github/actions/setup-gdrive
+        with:
+          credentials: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS_JSON }}
+
+      - name: Upload data generation results to Google Drive
+        run: |
+          poetry run python upload_to_gdrive.py "data/dataset/*.json" --target-path=dataset --drive-id=${{ vars.GOOGLE_DRIVE_SHARED_DRIVE_ID }}
+
+      - name: Dataset Generation Summary
+        run: |
+          echo "## Dataset Generation Results - Round ${{ matrix.round_number }} - ${{ matrix.chat_model }}" >> $GITHUB_STEP_SUMMARY
+          echo "Generated datasets:" >> $GITHUB_STEP_SUMMARY
+          ls -la data/dataset/*.json | while read line; do
+            echo "- $line" >> $GITHUB_STEP_SUMMARY
+          done
+          echo "Dataset count: $(ls -1 data/dataset/*.json | wc -l)" >> $GITHUB_STEP_SUMMARY
+        if: always()
+
+  eval-data:
+    runs-on: self-hosted
+    needs: gen-data
+    strategy:
+      matrix:
+        round_number: [2, 3]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install poetry
+        run: |
+          python -m pip install poetry==2.1.2
+
+      - name: Configure poetry
+        run: |
+          python -m poetry config virtualenvs.in-project true
+
+      - name: Set up cache
+        uses: actions/cache@v4
+        id: cached-poetry-dependencies
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-3.13-${{ hashFiles('**/poetry.lock') }}-self-hosted
+
+      - name: Install dependencies
+        run: poetry install
+        if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
+
+      - name: Download artifacts for current round
+        uses: actions/download-artifact@v5
+        with:
+          pattern: reg-test-gen-round-${{ matrix.round_number }}-*-${{ github.run_id }}
+          merge-multiple: true
+          path: data/dataset
+
+      - name: List downloaded artifacts
+        run: |
+          ls -R
+
+      - name: Run regression tests
+        env:
+          MODEL_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MODEL_ENDPOINT: ${{ vars.OPENAI_ENDPOINT }}
+          CHAT_COMPLETIONS_MODEL_NAME: ${{ vars.DEFAULT_CHAT_COMPLETIONS_MODEL_NAME }}
+        timeout-minutes: 1440
+        run: |
+          poetry run python evaluate_dataset.py --round-number=${{ matrix.round_number }}
+
+      - name: Archive data evaluation results to GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: reg-test-eval-round-${{ matrix.round_number }}-${{ github.run_id }}
+          path: |
+            data/batch
+            data/dataset/rated-*
+
+      - name: Setup Google Drive credentials
+        uses: ./.github/actions/setup-gdrive
+        with:
+          credentials: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS_JSON }}
+
+      - name: Upload evaluation results to Google Drive
+        run: |
+          poetry run python upload_to_gdrive.py "data/dataset/rated-*" --target-path=ratings --drive-id=${{ vars.GOOGLE_DRIVE_SHARED_DRIVE_ID }}
+          poetry run python upload_to_gdrive.py "data/batch/*" --target-path=batch --drive-id=${{ vars.GOOGLE_DRIVE_SHARED_DRIVE_ID }}
+
+      - name: Evaluation Summary
+        run: |
+          echo "## Evaluation Results - Round ${{ matrix.round_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "Batch files:" >> $GITHUB_STEP_SUMMARY
+          find data/batch -name "*.json" -o -name "*.jsonl" 2>/dev/null | while read file; do
+            echo "- $file ($(wc -l < "$file" 2>/dev/null || echo "0") lines)" >> $GITHUB_STEP_SUMMARY
+          done || echo "No batch files found" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Rated datasets:" >> $GITHUB_STEP_SUMMARY
+          ls data/dataset/rated-*.json 2>/dev/null | while read file; do
+            echo "- $file" >> $GITHUB_STEP_SUMMARY
+          done || echo "No rated datasets found" >> $GITHUB_STEP_SUMMARY
+        if: always()

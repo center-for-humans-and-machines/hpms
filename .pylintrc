@@ -1,0 +1,18 @@
+[MAIN]
+
+# Use multiple processes to speed up Pylint.
+jobs=0
+
+[MESSAGES CONTROL]
+
+# Ignoring Import Errors is desired as super-linter
+# does not support installing dependencies as it runs
+disable=import-error
+
+[FORMAT]
+
+# Regexp for a line that is allowed to be longer than the limit.
+ignore-long-lines=^\s*(# )?<?https?://\S+>?$
+
+# Maximum number of characters on a single line.
+max-line-length=100

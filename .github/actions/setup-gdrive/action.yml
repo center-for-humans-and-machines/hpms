@@ -1,0 +1,13 @@
+name: "Setup Google Drive Credentials"
+description: "Creates credentials.json file for Google Drive access"
+inputs:
+  credentials:
+    description: "Base64 encoded Google Drive credentials JSON"
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Create credentials.json for Google Drive
+      shell: bash
+      run: |
+        echo "${{ inputs.credentials }}" | base64 --decode > credentials.json
