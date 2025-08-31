@@ -1,7 +1,5 @@
 # Hybrid Psychiatrist-in-the-Loop Monitoring System for LLM Conversational Agents
 
-[Dataset card](./dataset-card.md)
-
 ## Requirements
 
 Assuming macOS with [Homebrew](https://brew.sh/) installed.
