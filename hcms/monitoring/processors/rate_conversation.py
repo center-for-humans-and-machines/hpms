@@ -57,7 +57,3 @@ class RateMessagesProcessor(BaseProcessor):
             input_column_name="message",
             output_column_name="llm_judge_rating",
         )
-            output_column_name="llm_judge_rating",
-        )
-            output_column_name="llm_judge_rating",
-        )
